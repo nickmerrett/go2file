@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
 	"github.com/AlexxIT/go2rtc/internal/app"
@@ -52,6 +53,32 @@ func Init() {
 	streams.HandleFunc("ffmpeg", NewProducer)
 
 	api.HandleFunc("api/ffmpeg", apiFFmpeg)
+	api.HandleFunc("api/record", apiRecord)
+	api.HandleFunc("api/record/stats", apiRecordingStats)
+	api.HandleFunc("api/record/cleanup", apiRecordingCleanup)
+	api.HandleFunc("api/recordings", apiRecordings)
+	api.HandleFunc("api/schedule", apiScheduler)
+	api.HandleFunc("api/schedule/test", apiSchedulerTest)
+
+	// Load recording configuration
+	LoadRecordingConfig()
+
+	// Start auto-recordings if enabled
+	if GlobalRecordingConfig.AutoStart || len(GlobalRecordingConfig.Streams) > 0 {
+		go func() {
+			// Delay to ensure streams are fully initialized
+			time.Sleep(time.Second * 10)
+			StartAutoRecordings()
+		}()
+	}
+
+	// Start recording scheduler
+	go func() {
+		// Delay to ensure everything is initialized
+		time.Sleep(time.Second * 15)
+		StartScheduler()
+		LoadSchedulesFromConfig()
+	}()
 
 	device.Init(defaults["bin"])
 	hardware.Init(defaults["bin"])
@@ -74,6 +101,7 @@ var defaults = map[string]string{
 	"output/raw":   "-f yuv4mpegpipe -",
 	"output/aac":   "-f adts -",
 	"output/wav":   "-f wav -",
+	"output/file":  "{output}", // for file output, output parameter contains full args
 
 	// `-preset superfast` - we can't use ultrafast because it doesn't support `-profile main -level 4.1`
 	// `-tune zerolatency` - for minimal latency
@@ -352,6 +380,14 @@ func parseArgs(s string) *ffmpeg.Args {
 		args.AddCodec("-vn")
 	case args.Audio == 0:
 		args.AddCodec("-an")
+	}
+
+	// Check for file output parameter
+	if outputParam := query.Get("output"); outputParam != "" {
+		args.Output = defaults["output/file"]
+		// Replace {output} placeholder with actual output parameters
+		args.Output = strings.Replace(args.Output, "{output}", outputParam, 1)
+		return args
 	}
 
 	// change otput from RTSP to some other pipe format

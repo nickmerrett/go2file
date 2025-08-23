@@ -1,0 +1,91 @@
+# Recording Scheduler Configuration Examples
+# Use cron-like syntax: "minute hour day month weekday"
+
+streams:
+  # Example cameras
+  office_cam: rtsp://admin:password@192.168.1.100/stream1
+  warehouse_cam: rtsp://admin:password@192.168.1.101/stream1
+  parking_lot: rtsp://admin:password@192.168.1.102/stream1
+  break_room: rtsp://admin:password@192.168.1.103/stream1
+
+recording:
+  # Global settings
+  base_path: "/var/recordings"
+  default_video: "copy"
+  default_audio: "copy"
+  create_directories: true
+
+  # Per-stream configuration with schedules
+  streams:
+    # Business hours recording
+    office_cam:
+      enabled: true
+      auto_start: false                          # No continuous recording
+      video: "copy"
+      audio: "copy"
+      format: "mp4"
+      schedule: "0 9-17 * * 1-5"                 # 9 AM to 5 PM, Monday-Friday (hourly)
+      retention_days: 30
+
+    # Security patrol schedule
+    warehouse_cam:
+      enabled: true
+      auto_start: false
+      video: "copy"
+      audio: "copy"
+      format: "mp4"
+      schedule: "0 8,12,16,20 * * *"             # 4 times a day: 8 AM, noon, 4 PM, 8 PM
+      retention_days: 14
+
+    # High-frequency monitoring during peak hours
+    parking_lot:
+      enabled: true
+      auto_start: false
+      video: "copy"
+      audio: "copy" 
+      format: "mp4"
+      schedule: "*/15 7-19 * * 1-6"              # Every 15 minutes, 7 AM-7 PM, Mon-Sat
+      retention_days: 7
+
+    # Privacy-focused: break room only during off-hours for security
+    break_room:
+      enabled: true
+      auto_start: false
+      video: "copy"
+      audio: "copy"
+      format: "mp4"
+      schedule: "0 22 * * *"                     # Once daily at 10 PM (security check)
+      retention_days: 3
+
+# API and network settings
+api:
+  listen: ":1984"
+
+# Common Schedule Examples:
+# 
+# Business Hours:
+# "0 9-17 * * 1-5"     = Every hour from 9 AM to 5 PM, Monday through Friday
+# "*/30 8-18 * * 1-5"  = Every 30 minutes from 8 AM to 6 PM, weekdays
+# 
+# Daily Recording:
+# "0 9 * * *"          = Every day at 9:00 AM
+# "30 14 * * *"        = Every day at 2:30 PM
+# "0 8,20 * * *"       = Every day at 8:00 AM and 8:00 PM
+# 
+# Weekly Recording:
+# "0 10 * * 1"         = Every Monday at 10:00 AM
+# "0 22 * * 6"         = Every Saturday at 10:00 PM
+# "0 6 * * 0"          = Every Sunday at 6:00 AM
+# 
+# High Frequency:
+# "*/15 * * * *"       = Every 15 minutes
+# "*/5 9-17 * * 1-5"   = Every 5 minutes during business hours
+# "0 */2 * * *"        = Every 2 hours
+# 
+# Monthly:
+# "0 0 1 * *"          = First day of every month at midnight
+# "0 12 15 * *"        = 15th of every month at noon
+# 
+# Special Events:
+# "0 0 25 12 *"        = Christmas Day at midnight
+# "0 0 1 1 *"          = New Year's Day at midnight

@@ -1,0 +1,56 @@
+# Enhanced Logging Configuration for go2rtc Recording System
+# Add this to your go2rtc.yaml to get detailed recording logs
+
+# Your existing configuration...
+streams:
+  carport:
+    - rtsp://nvr:password1234@10.10.20.155:554/Streaming/Channels/101?transportmode=unicast&profile=Profile_1
+
+recording:
+  base_path: "/recordings"
+  path_template: "{year}/{month}/{day}/{stream}"
+  filename_template: "{stream}_{timestamp}"
+  default_format: "mp4"
+  segment_duration: "10m"
+  max_file_size: 1024
+  enable_segments: true                          # ✅ Enable segmentation globally
+  retention_days: 7
+  max_recordings: 100
+  max_total_size: 10240
+  enable_cleanup: true
+  cleanup_interval: "1h"
+  move_to_archive: false
+  default_video: "copy"
+  default_audio: "copy"
+  restart_on_error: true
+  create_directories: true
+  
+  streams:
+    carport:
+      enabled: true
+      auto_start: true
+      segment_duration: "10m"
+      max_file_size: 1000
+
+# Enhanced Logging Configuration
+log:
+  level: "debug"                                 # Show debug logs for detailed info
+  format: "text"                                 # Human-readable format (vs "json")
+  output: "stdout"                               # Log to console (can be a file path)
+  
+  # Module-specific log levels (optional)
+  modules:
+    ffmpeg: "info"                               # FFmpeg logs (can be: trace, debug, info, warn, error)
+    recording: "debug"                           # Recording system logs
+    segments: "debug"                            # Segmentation logs
+    auto-record: "info"                          # Auto-recording logs
+
+# API and network settings
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555"
+
+rtsp:
+  listen: ":8554"

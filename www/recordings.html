@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=yes, initial-scale=1, maximum-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <link rel="apple-touch-icon" href="https://alexxit.github.io/go2rtc/icons/apple-touch-icon-180x180.png" sizes="180x180">
+    <link rel="icon" href="https://alexxit.github.io/go2rtc/icons/favicon.ico">
+    <link rel="manifest" href="https://alexxit.github.io/go2rtc/manifest.json">
+    <title>Recordings - go2rtc</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        table tbody td {
+            font-size: 13px;
+        }
+
+        label {
+            display: flex;
+            align-items: center;
+        }
+
+        .controls {
+            display: flex;
+            padding: 5px;
+        }
+
+        .controls > label {
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+<script src="main.js"></script>
+<div class="info"></div>
+<div class="controls">
+    <a href="/">home</a>
+    <label>Camera: 
+        <select id="streamFilter">
+            <option value="">All Cameras</option>
+        </select>
+    </label>
+    <label>Date: <input type="date" id="dateFilter" /></label>
+    <label>Limit: 
+        <select id="limitFilter">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+        </select>
+    </label>
+    <a href="#" onclick="loadRecordings(); return false;">refresh</a>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>Stream</th>
+            <th>Date & Time</th>
+            <th>Size</th>
+            <th>Commands</th>
+        </tr>
+    </thead>
+    <tbody id="recordings">
+    </tbody>
+</table>
+
+<script>
+    let allRecordings = [];
+    let currentStreamFilter = '';
+    let currentDateFilter = '';
+    let currentLimit = 100;
+
+    // Initialize from URL parameters
+    function initializeFromURL() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const streamParam = urlParams.get('stream');
+        const dateParam = urlParams.get('date');
+        
+        if (streamParam) {
+            currentStreamFilter = streamParam;
+        }
+        
+        if (dateParam) {
+            currentDateFilter = dateParam;
+            document.getElementById('dateFilter').value = dateParam;
+        }
+    }
+
+    // Load recordings on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeFromURL();
+        loadRecordings();
+        setupEventListeners();
+    });
+
+    function setupEventListeners() {
+        document.getElementById('streamFilter').addEventListener('change', function() {
+            currentStreamFilter = this.value;
+            loadRecordings();
+        });
+        
+        document.getElementById('dateFilter').addEventListener('change', function() {
+            currentDateFilter = this.value;
+            loadRecordings();
+        });
+        
+        document.getElementById('limitFilter').addEventListener('change', function() {
+            currentLimit = parseInt(this.value);
+            loadRecordings();
+        });
+    }
+
+    async function loadRecordings() {
+        const tbody = document.getElementById('recordings');
+        const info = document.querySelector('.info');
+        
+        try {
+            const params = new URLSearchParams();
+            if (currentStreamFilter) params.append('stream', currentStreamFilter);
+            if (currentDateFilter) params.append('date', currentDateFilter);
+            params.append('limit', currentLimit.toString());
+
+            const response = await fetch(`/api/recordings?${params}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            allRecordings = data.recordings || [];
+            
+            updateStreamFilter(data.recordings);
+            renderRecordings(data.recordings, data.grouped || {});
+            
+            // Update info like index.html does
+            info.innerText = `Recordings: ${data.recordings.length} found`;
+            
+        } catch (err) {
+            console.error('Error loading recordings:', err);
+            const info = document.querySelector('.info');
+            info.innerText = `Error: ${err.message}`;
+        }
+    }
+
+    function updateStreamFilter(recordings) {
+        const streamFilter = document.getElementById('streamFilter');
+        const targetValue = currentStreamFilter || streamFilter.value;
+        
+        // Get unique stream names
+        const streams = [...new Set(recordings.map(r => r.stream_name))].sort();
+        
+        // Rebuild options
+        streamFilter.innerHTML = '<option value="">All Cameras</option>';
+        streams.forEach(stream => {
+            const option = document.createElement('option');
+            option.value = stream;
+            option.textContent = stream;
+            if (stream === targetValue) {
+                option.selected = true;
+            }
+            streamFilter.appendChild(option);
+        });
+    }
+
+    function renderRecordings(recordings, grouped) {
+        const tbody = document.getElementById('recordings');
+        tbody.innerHTML = '';
+        
+        if (recordings.length === 0) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="4">No recordings found</td>';
+            tbody.appendChild(row);
+            return;
+        }
+
+        // Sort dates in descending order (newest first)
+        const sortedDates = Object.keys(grouped).sort().reverse();
+        
+        sortedDates.forEach(date => {
+            // Add date header row (like index.html style)
+            const dateRow = document.createElement('tr');
+            dateRow.innerHTML = `<td colspan="4"><strong>${formatDateHeader(date)}</strong></td>`;
+            tbody.appendChild(dateRow);
+            
+            // Add recording rows for this date
+            grouped[date].forEach(recording => {
+                const row = document.createElement('tr');
+                
+                const startTime = new Date(recording.start_time);
+                const commands = [
+                    `<a href="stream.html?src=recording_${recording.id}">stream</a>`,
+                    `<a href="${recording.download_url}" download>download</a>`,
+                    `<a href="/api/recordings?info=${recording.id}">info</a>`
+                ].join(' / ');
+                
+                row.innerHTML = `
+                    <td>${recording.stream_name}</td>
+                    <td>${formatDateTime(startTime)}</td>
+                    <td>${recording.size_human}</td>
+                    <td>${commands}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        });
+    }
+
+
+    // Utility functions
+    function formatDateTime(date) {
+        return date.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    function formatDateHeader(dateStr) {
+        const date = new Date(dateStr);
+        const today = new Date();
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        
+        if (dateStr === today.toISOString().split('T')[0]) {
+            return 'Today';
+        } else if (dateStr === yesterday.toISOString().split('T')[0]) {
+            return 'Yesterday';
+        } else {
+            return date.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
+        }
+    }
+
+    // Auto-reload like index.html
+    setInterval(loadRecordings, 5000);
+
+    // Load API info like index.html
+    const url = new URL('api', location.href);
+    fetch(url, {cache: 'no-cache'}).then(r => r.json()).then(data => {
+        const info = document.querySelector('.info');
+        if (allRecordings.length === 0) {
+            info.innerText = `Version: ${data.version}, Config: ${data.config_path}`;
+        }
+    });
+
+    loadRecordings();
+</script>
+</body>
+</html>
