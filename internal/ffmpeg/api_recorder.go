@@ -119,6 +119,12 @@ func handleStartRecording(w http.ResponseWriter, r *http.Request, query url.Valu
 		recordingID = customID
 	}
 	
+	log.Info().
+		Str("stream", streamName).
+		Str("recording_id", recordingID).
+		Bool("use_segments", useSegments).
+		Msg("[api] starting recording via API")
+
 	// Start recording (segmented or regular)
 	var response map[string]interface{}
 	
@@ -215,15 +221,77 @@ func apiRecordingCleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := CleanupNow()
+	query := r.URL.Query()
+	
+	// Check if this is a force cleanup request
+	if query.Get("force") == "true" {
+		handleForceCleanup(w, r, query)
+		return
+	}
+
+	// Normal cleanup
+	result, err := CleanupNowWithStats()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cleanup failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	response := map[string]interface{}{
-		"status": "cleanup completed",
-		"timestamp": time.Now(),
+		"status":            "cleanup completed",
+		"timestamp":         time.Now(),
+		"files_deleted":     result.FilesDeleted,
+		"files_archived":    result.FilesArchived,
+		"space_reclaimed_mb": result.SpaceReclaimed,
+		"total_size_before_mb": result.TotalSizeBefore,
+		"total_size_after_mb":  result.TotalSizeAfter,
+		"streams_affected":    result.StreamsAffected,
+		"policies_applied":    result.Policies,
+		"details": map[string]interface{}{
+			"deleted_files":  result.DeletedFiles,
+			"archived_files": result.ArchivedFiles,
+		},
+	}
+
+	api.ResponseJSON(w, response)
+}
+
+func handleForceCleanup(w http.ResponseWriter, r *http.Request, query url.Values) {
+	// Parse parameters
+	olderThanDays := 3 // Default to 3 days
+	if days := query.Get("older_than_days"); days != "" {
+		if parsed, err := strconv.Atoi(days); err == nil && parsed > 0 {
+			olderThanDays = parsed
+		}
+	}
+	
+	dryRun := query.Get("dry_run") == "true"
+	
+	log.Info().
+		Int("older_than_days", olderThanDays).
+		Bool("dry_run", dryRun).
+		Msg("[api] force cleanup requested")
+
+	result, err := ForceCleanupOldRecordings(olderThanDays, dryRun)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Force cleanup failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"status":               "force cleanup completed",
+		"timestamp":            time.Now(),
+		"older_than_days":      olderThanDays,
+		"dry_run":              dryRun,
+		"files_deleted":        result.FilesDeleted,
+		"files_archived":       result.FilesArchived,
+		"space_reclaimed_mb":    result.SpaceReclaimed,
+		"total_size_before_mb":  result.TotalSizeBefore,
+		"total_size_after_mb":   result.TotalSizeAfter,
+		"policies_applied":     result.Policies,
+		"details": map[string]interface{}{
+			"deleted_files":  result.DeletedFiles,
+			"archived_files": result.ArchivedFiles,
+		},
 	}
 
 	api.ResponseJSON(w, response)

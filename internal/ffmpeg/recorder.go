@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ type Recording struct {
 	StartTime time.Time     `json:"start_time"`
 	Duration  time.Duration `json:"duration,omitempty"`
 	Active   bool          `json:"active"`
+	PID      int           `json:"pid,omitempty"`      // FFmpeg process PID
 	
 	publisher core.Producer
 	mu        sync.Mutex
@@ -49,11 +51,8 @@ func (r *Recording) Start() error {
 	log.Info().
 		Str("recording_id", r.ID).
 		Str("stream", r.Stream).
-		Str("video_codec", r.Config.Video).
-		Str("audio_codec", r.Config.Audio).
-		Str("format", r.Config.Format).
-		Dur("duration", r.Config.Duration).
-		Msg("[recording] starting recording")
+		Str("filename", r.Config.Filename).
+		Msg("[recording] started recording session")
 	
 	if r.Active {
 		return fmt.Errorf("recording already active")
@@ -66,10 +65,6 @@ func (r *Recording) Start() error {
 		r.Config.Filename = GenerateRecordingPath(r.Stream, r.StartTime, r.Config.Format, 0)
 	}
 	
-	log.Debug().
-		Str("recording_id", r.ID).
-		Str("filename", r.Config.Filename).
-		Msg("[recording] generated filename")
 
 	// Ensure output directory exists
 	dir := filepath.Dir(r.Config.Filename)
@@ -82,14 +77,36 @@ func (r *Recording) Start() error {
 				Msg("[recording] failed to create output directory")
 			return fmt.Errorf("failed to create output directory: %w", err)
 		}
-		log.Debug().
-			Str("recording_id", r.ID).
-			Str("directory", dir).
-			Msg("[recording] created output directory")
 	}
 	
-	// Build exec command for recording using FFmpeg
-	rtspURL := fmt.Sprintf("rtsp://127.0.0.1:%s/%s", rtsp.Port, r.Stream)
+	// Determine the recording source (direct RTSP or internal routing)
+	recordingSource := GetRecordingSource(r.Stream, rtsp.Port)
+	
+		
+	// Check if we're using direct source or need to validate internal stream
+	if strings.HasPrefix(recordingSource, "rtsp://127.0.0.1:") {
+		// Using internal routing - validate stream exists
+		sourceStream := streams.Get(r.Stream)
+		if sourceStream == nil {
+			log.Error().
+				Str("recording_id", r.ID).
+				Str("stream", r.Stream).
+				Msg("[recording] internal source stream not found")
+			return fmt.Errorf("internal source stream '%s' not found", r.Stream)
+		}
+		log.Info().
+			Str("recording_id", r.ID).
+			Str("stream", r.Stream).
+			Msg("[recording] using internal RTSP routing")
+	} else {
+		// Using direct source
+		log.Info().
+			Str("recording_id", r.ID).
+			Str("stream", r.Stream).
+			Str("source", recordingSource).
+			Msg("[recording] using direct RTSP source")
+	}
+	
 	
 	// Build FFmpeg exec command
 	video := r.Config.Video
@@ -104,7 +121,7 @@ func (r *Recording) Start() error {
 	}
 	
 	// Create exec URL that uses FFmpeg to record stream to file
-	execURL := fmt.Sprintf("exec:ffmpeg -i %s", rtspURL)
+	execURL := fmt.Sprintf("exec:ffmpeg -i %s", recordingSource)
 	
 	// Add video codec
 	if video == "copy" {
@@ -169,32 +186,49 @@ func (r *Recording) Start() error {
 		
 		log.Info().
 			Str("recording_id", r.ID).
-			Int("segment_time", segmentTime).
+			Int("segment_time_seconds", segmentTime).
 			Str("segment_pattern", segmentPattern).
-			Msg("[recording] using FFmpeg segmentation")
+			Msg("[SEGMENTATION] Configured for automatic file splitting")
 	} else {
 		execURL += fmt.Sprintf(" -f %s -y %s", format, r.Config.Filename)
 	}
 	
-	log.Info().
-		Str("recording_id", r.ID).
-		Str("stream", r.Stream).
-		Str("exec_url", execURL).
-		Str("rtsp_source", rtspURL).
-		Str("output_file", r.Config.Filename).
-		Msg("[recording] executing ffmpeg command")
 	
-	// Create the producer using exec
-	producer, err := streams.GetProducer(execURL)
+	
+	// Create the producer using exec with timeout protection
+	type producerResult struct {
+		producer core.Producer
+		err      error
+	}
+	
+	resultChan := make(chan producerResult, 1)
+	go func() {
+		producer, err := streams.GetProducer(execURL)
+		resultChan <- producerResult{producer: producer, err: err}
+	}()
+	
+	// Wait for producer creation with timeout
+	var producer core.Producer
+	var err error
+	select {
+	case result := <-resultChan:
+		producer = result.producer
+		err = result.err
+	case <-time.After(10 * time.Second):
+		err = fmt.Errorf("timeout creating producer after 10 seconds")
+	}
+	
 	if err != nil {
 		log.Error().
 			Err(err).
 			Str("recording_id", r.ID).
 			Str("stream", r.Stream).
 			Str("exec_url", execURL).
+			Str("error_type", fmt.Sprintf("%T", err)).
 			Msg("[recording] failed to create exec producer")
 		return fmt.Errorf("failed to create exec producer: %w", err)
 	}
+	
 	
 	// Start the producer
 	if err := producer.Start(); err != nil {
@@ -214,9 +248,7 @@ func (r *Recording) Start() error {
 		Str("recording_id", r.ID).
 		Str("stream", r.Stream).
 		Str("output_file", r.Config.Filename).
-		Time("start_time", r.StartTime).
-		Dur("duration", r.Config.Duration).
-		Msg("[recording] recording started successfully")
+		Msg("[recording] active and writing to file")
 	
 	// Handle duration limit
 	if r.Config.Duration > 0 {
@@ -244,8 +276,7 @@ func (r *Recording) Stop() error {
 	log.Info().
 		Str("recording_id", r.ID).
 		Str("stream", r.Stream).
-		Bool("was_active", r.Active).
-		Msg("[recording] stopping recording")
+		Msg("[recording] stopping recording session")
 	
 	if !r.Active {
 		log.Debug().
@@ -278,8 +309,7 @@ func (r *Recording) Stop() error {
 		Str("stream", r.Stream).
 		Str("output_file", r.Config.Filename).
 		Dur("duration", duration).
-		Time("start_time", r.StartTime).
-		Msg("[recording] recording stopped successfully")
+		Msg("[recording] recording completed")
 	
 	return nil
 }
@@ -380,6 +410,18 @@ func (rm *RecordingManager) ListRecordings() map[string]*Recording {
 		result[id] = recording
 	}
 	return result
+}
+
+func (rm *RecordingManager) IsStreamRecording(streamName string) bool {
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+
+	for _, recording := range rm.recordings {
+		if recording.Stream == streamName && recording.Active {
+			return true
+		}
+	}
+	return false
 }
 
 func (rm *RecordingManager) StopAll() {

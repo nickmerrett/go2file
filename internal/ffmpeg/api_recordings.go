@@ -256,9 +256,10 @@ func handleRecordingStream(w http.ResponseWriter, r *http.Request, query map[str
 		return
 	}
 	
-	// Create a file:// URL for the recording
+	// Create an exec URL using FFmpeg to stream the file
 	streamName := fmt.Sprintf("recording_%s", recordingID)
-	fileURL := fmt.Sprintf("file://%s", targetRecording.Path)
+	// Use exec:ffmpeg to stream the file with re-streaming
+	fileURL := fmt.Sprintf("exec:ffmpeg -re -i %s -c copy -f rtsp {output}", targetRecording.Path)
 	
 	// Check if stream already exists, if not create it
 	stream := streams.Get(streamName)

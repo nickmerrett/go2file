@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 type StreamRecordingConfig struct {
 	// Override global settings per stream
 	Enabled          *bool         `yaml:"enabled"`           // Enable recording for this stream
+	Source           string        `yaml:"source"`            // Direct RTSP source URL (overrides stream routing)
 	PathTemplate     string        `yaml:"path_template"`     // Custom path template for this stream
 	FilenameTemplate string        `yaml:"filename_template"` // Custom filename template
 	Format           string        `yaml:"format"`            // Output format for this stream
@@ -72,9 +74,13 @@ type RecordingConfig struct {
 
 	// Recording behavior
 	AutoStart        bool          `yaml:"auto_start"`        // Auto-start recording when stream available
+	AutoRecordCheckInterval time.Duration `yaml:"auto_record_check_interval"` // How often to check for new streams to record
 	RestartOnError   bool          `yaml:"restart_on_error"`  // Restart if FFmpeg fails
 	BufferTime       time.Duration `yaml:"buffer_time"`       // Pre-recording buffer duration
 	PostRecordingTime time.Duration `yaml:"post_recording_time"` // Continue after stream ends
+	
+	// Source settings
+	DirectSource     string        `yaml:"direct_source"`     // Global direct source template (e.g., "rtsp://camera-{stream}.local/stream1")
 
 	// Quality and codec settings
 	DefaultVideo     string        `yaml:"default_video"`     // Default video codec
@@ -112,6 +118,7 @@ var GlobalRecordingConfig = &RecordingConfig{
 	ArchivePath:       "archive",
 
 	AutoStart:         false,         // Don't auto-start by default
+	AutoRecordCheckInterval: time.Second * 10, // Check every 10 seconds by default
 	RestartOnError:    true,          // Restart on errors
 	BufferTime:        0,             // No buffer by default
 	PostRecordingTime: time.Second * 5, // 5 seconds after stream ends
@@ -160,6 +167,7 @@ func LoadRecordingConfig() {
 		Int64("max_file_size_mb", GlobalRecordingConfig.MaxFileSize).
 		Int("retention_days", GlobalRecordingConfig.RetentionDays).
 		Bool("auto_start", GlobalRecordingConfig.AutoStart).
+		Dur("auto_record_check_interval", GlobalRecordingConfig.AutoRecordCheckInterval).
 		Bool("enable_cleanup", GlobalRecordingConfig.EnableCleanup).
 		Int("stream_count", len(GlobalRecordingConfig.Streams)).
 		Msg("[recording] config loaded")
@@ -171,6 +179,7 @@ func LoadRecordingConfig() {
 			Interface("enabled", streamConfig.Enabled).
 			Interface("auto_start", streamConfig.AutoStart).
 			Str("video", streamConfig.Video).
+			Str("source", streamConfig.Source).
 			Str("audio", streamConfig.Audio).
 			Str("format", streamConfig.Format).
 			Interface("enable_segments", streamConfig.EnableSegments).
@@ -300,16 +309,42 @@ func GetDefaultCodecs() (video, audio string) {
 func IsStreamRecordingEnabled(streamName string) bool {
 	cfg := GlobalRecordingConfig
 	
-	// Check stream-specific configuration first
+	// Check if stream is explicitly configured for recording
 	if streamConfig, exists := cfg.Streams[streamName]; exists {
 		// If explicitly set for this stream, use that setting
 		if streamConfig.Enabled != nil {
+			log.Debug().
+				Str("stream", streamName).
+				Bool("enabled", *streamConfig.Enabled).
+				Msg("[recording] stream has explicit enabled setting")
 			return *streamConfig.Enabled
 		}
+		
+		// Stream is in recording config but no explicit enabled field
+		// This means user configured it for recording, so default to true
+		log.Debug().
+			Str("stream", streamName).
+			Msg("[recording] stream configured for recording without explicit enabled, defaulting to true")
+		return true
 	}
 	
-	// Fall back to global auto_start setting
-	return cfg.AutoStart
+	// Stream is NOT in recording configuration at all
+	// Only record if global auto_start is enabled AND there are no specific stream configs
+	if cfg.AutoStart && len(cfg.Streams) == 0 {
+		// Global auto_start mode - record all streams
+		log.Debug().
+			Str("stream", streamName).
+			Msg("[recording] global auto_start enabled with no specific stream configs")
+		return true
+	}
+	
+	// If there are specific stream configurations, only record those explicitly configured
+	log.Debug().
+		Str("stream", streamName).
+		Int("configured_streams", len(cfg.Streams)).
+		Bool("global_auto_start", cfg.AutoStart).
+		Msg("[recording] stream not in recording config and specific streams configured, not recording")
+	return false
 }
 
 // GetStreamRecordingConfig returns the effective configuration for a stream
@@ -329,6 +364,7 @@ func GetStreamRecordingConfig(streamName string) StreamRecordingConfig {
 		MaxRecordings:   cfg.MaxRecordings,
 		PathTemplate:    cfg.PathTemplate,
 		FilenameTemplate: cfg.FilenameTemplate,
+		// Source will be resolved after stream-specific overrides
 	}
 	
 	// Set default boolean pointers
@@ -345,6 +381,9 @@ func GetStreamRecordingConfig(streamName string) StreamRecordingConfig {
 	if specificConfig, exists := cfg.Streams[streamName]; exists {
 		if specificConfig.Enabled != nil {
 			streamConfig.Enabled = specificConfig.Enabled
+		}
+		if specificConfig.Source != "" {
+			streamConfig.Source = specificConfig.Source // Override with stream-specific source
 		}
 		if specificConfig.Format != "" {
 			streamConfig.Format = specificConfig.Format
@@ -403,6 +442,19 @@ func GetStreamRecordingConfig(streamName string) StreamRecordingConfig {
 		streamConfig.RecordOnMotion = specificConfig.RecordOnMotion
 	}
 	
+	// Resolve direct source after all overrides (this ensures stream-specific sources take priority)
+	if streamConfig.Source == "" {
+		streamConfig.Source = ResolveDirectSource(streamName)
+	}
+	
+	// Debug logging for direct source resolution
+	if streamConfig.Source != "" {
+		log.Debug().
+			Str("stream", streamName).
+			Str("resolved_source", streamConfig.Source).
+			Msg("[config] resolved direct RTSP source for stream")
+	}
+	
 	return streamConfig
 }
 
@@ -429,4 +481,49 @@ func GetStreamsToAutoRecord() []string {
 // ShouldAutoStartRecording returns true if recording should auto-start for the stream
 func ShouldAutoStartRecording(streamName string) bool {
 	return IsStreamRecordingEnabled(streamName)
+}
+
+// ResolveDirectSource resolves the direct source URL for a stream
+func ResolveDirectSource(streamName string) string {
+	cfg := GlobalRecordingConfig
+	
+	// Check if there's a stream-specific direct source
+	if streamConfig, exists := cfg.Streams[streamName]; exists && streamConfig.Source != "" {
+		log.Debug().
+			Str("stream", streamName).
+			Str("source", streamConfig.Source).
+			Msg("[config] using per-stream direct source")
+		return streamConfig.Source
+	}
+	
+	// Check if there's a global direct source template
+	if cfg.DirectSource != "" {
+		// Replace {stream} placeholder with actual stream name
+		directSource := strings.ReplaceAll(cfg.DirectSource, "{stream}", streamName)
+		log.Debug().
+			Str("stream", streamName).
+			Str("template", cfg.DirectSource).
+			Str("resolved", directSource).
+			Msg("[config] using global direct source template")
+		return directSource
+	}
+	
+	// No direct source configured, will use go2rtc internal routing
+	log.Debug().
+		Str("stream", streamName).
+		Msg("[config] no direct source configured, using internal RTSP")
+	return ""
+}
+
+// GetRecordingSource returns the source URL for recording (either direct or internal RTSP)
+func GetRecordingSource(streamName string, internalRTSPPort string) string {
+	directSource := ResolveDirectSource(streamName)
+	
+	if directSource != "" {
+		// Use direct source
+		return directSource
+	}
+	
+	// Use internal RTSP server
+	return fmt.Sprintf("rtsp://127.0.0.1:%s/%s", internalRTSPPort, streamName)
 }
