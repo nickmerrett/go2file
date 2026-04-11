@@ -365,3 +365,13 @@ func (srm *SegmentedRecordingManager) ListSegmentedRecordings() map[string]*Segm
 	}
 	return result
 }
+
+func (srm *SegmentedRecordingManager) StopAll() {
+	srm.mu.Lock()
+	defer srm.mu.Unlock()
+
+	for id, recording := range srm.recordings {
+		recording.Stop()
+		delete(srm.recordings, id)
+	}
+}

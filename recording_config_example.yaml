@@ -9,7 +9,7 @@ streams:
 recording:
   # Storage Settings
   base_path: "/var/recordings"                    # Base directory for all recordings
-  path_template: "{year}/{month}/{day}/{stream}" # Directory structure template
+  path_template: "{stream}"                      # Directory structure template
   filename_template: "{stream}_{timestamp}"      # Filename template (without extension)
   default_format: "mp4"                         # Default output format
   create_directories: true                       # Auto-create directory structure
@@ -58,7 +58,7 @@ recording:
       enable_segments: true                    # Enable segmentation for this stream
       segment_duration: "2h"                  # 2-hour segments
       retention_days: 30                      # Keep for 30 days
-      path_template: "security/{year}/{month}/{stream}"        # Custom path
+      path_template: "security/{stream}"                       # Custom path
       filename_template: "security_{stream}_{timestamp}"       # Custom filename
       
     # Camera 2 - Record but with different settings
@@ -81,7 +81,7 @@ recording:
       audio: "copy"
       format: "mp4"
       retention_days: 60                      # Keep doorbell recordings longer
-      path_template: "doorbell/{year}/{month}/{day}"
+      path_template: "doorbell/{stream}"
       filename_template: "doorbell_{timestamp}"
       
     # Camera 3 - Disabled (won't record even if global auto_start is true)
@@ -105,7 +105,7 @@ recording:
 # Example production configuration for high-volume surveillance
 # recording:
 #   base_path: "/mnt/surveillance"
-#   path_template: "{year}/{month}/{day}/{hour}/{stream}"
+#   path_template: "{stream}"                            # Simple stream-based folders
 #   filename_template: "{stream}_{date}_{time}"
 #   default_format: "mkv"                     # Better for long recordings
 #   

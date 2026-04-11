@@ -12,7 +12,7 @@ streams:
 recording:
   # Storage Configuration
   base_path: "/var/recordings"                    # Main recording directory
-  path_template: "{year}/{month}/{day}/{stream}" # Organized by date and camera
+  path_template: "{stream}"                      # Simple stream-based folders
   filename_template: "{stream}_{date}_{time}"     # Clear naming with date/time
   default_format: "mkv"                           # Better for continuous recording
   create_directories: true                        # Auto-create folder structure
@@ -59,7 +59,7 @@ recording:
       format: "mkv"
       retention_days: 60                         # Keep front door footage longer
       segment_duration: "60m"                    # 1-hour segments for main entrance
-      path_template: "security/front_door/{year}/{month}/{day}"
+      path_template: "security/front_door"
       filename_template: "front_door_{date}_{time}"
       schedule: "0 0 * * *"                      # Additional daily backup at midnight (1 hour)
       
@@ -70,7 +70,7 @@ recording:
       audio: "copy"
       retention_days: 60                         # Keep back door footage longer
       segment_duration: "60m"
-      path_template: "security/back_door/{year}/{month}/{day}"
+      path_template: "security/back_door"
       filename_template: "back_door_{date}_{time}"
 
     # Standard cameras - default settings work well
@@ -89,7 +89,7 @@ recording:
       audio: "copy"
       retention_days: 7                          # Shorter retention for indoor
       segment_duration: "15m"                    # Smaller segments
-      path_template: "indoor/{year}/{month}/{day}"
+      path_template: "indoor/living_room"
       schedule: "0 9-17 * * 1-5"                 # Only during work hours on weekdays
 
     # Motion-activated camera - scheduled recording during specific times

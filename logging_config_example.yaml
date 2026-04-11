@@ -8,7 +8,7 @@ streams:
 
 recording:
   base_path: "/recordings"
-  path_template: "{year}/{month}/{day}/{stream}"
+  path_template: "{stream}"
   filename_template: "{stream}_{timestamp}"
   default_format: "mp4"
   segment_duration: "10m"

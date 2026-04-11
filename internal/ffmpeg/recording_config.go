@@ -72,6 +72,23 @@ type RecordingConfig struct {
 	MoveToArchive    bool          `yaml:"move_to_archive"`   // Move old files instead of deleting
 	ArchivePath      string        `yaml:"archive_path"`      // Archive directory path
 
+	// Health check settings
+	EnableHealthCheck    bool          `yaml:"enable_health_check"`    // Enable automatic health monitoring
+	HealthCheckInterval  time.Duration `yaml:"health_check_interval"`  // How often to run health checks
+
+	// Watchdog settings (enhanced health monitoring)
+	WatchdogEnabled         bool          `yaml:"watchdog_enabled"`          // Enable continuous watchdog monitoring
+	WatchdogInterval        time.Duration `yaml:"watchdog_interval"`         // Fast check interval (default 30s)
+	MinFileGrowthRate       int64         `yaml:"min_file_growth_rate"`      // Minimum bytes/sec expected (default 1000)
+	StallThreshold          int           `yaml:"stall_threshold"`           // Consecutive stalls before recovery (default 3)
+	MaxRecoveryAttempts     int           `yaml:"max_recovery_attempts"`     // Max recovery attempts per stream (default 5)
+	RecoveryCooldown        time.Duration `yaml:"recovery_cooldown"`         // Time between recovery attempts (default 2m)
+
+	// Minimum file protection (prevents cleanup from deleting all files)
+	MinimumFilesPerStream   int           `yaml:"minimum_files_per_stream"`  // Minimum files to keep per stream (default 5)
+	MinimumTotalFiles       int           `yaml:"minimum_total_files"`       // Minimum total files to keep (default 10)
+	ProtectRecentFiles      time.Duration `yaml:"protect_recent_files"`      // Don't delete files newer than this (default 1h)
+
 	// Recording behavior
 	AutoStart        bool          `yaml:"auto_start"`        // Auto-start recording when stream available
 	AutoRecordCheckInterval time.Duration `yaml:"auto_record_check_interval"` // How often to check for new streams to record
@@ -98,7 +115,7 @@ type RecordingConfig struct {
 var GlobalRecordingConfig = &RecordingConfig{
 	// Default values
 	BasePath:          "recordings",
-	PathTemplate:      "{year}/{month}/{day}/{stream}",
+	PathTemplate:      "{stream}",
 	FilenameTemplate:  "{stream}_{timestamp}",
 	DefaultFormat:     "mp4",
 	CreateDirectories: true,
@@ -116,6 +133,22 @@ var GlobalRecordingConfig = &RecordingConfig{
 	CleanupInterval:   time.Hour,     // Check every hour
 	MoveToArchive:     false,         // Delete by default
 	ArchivePath:       "archive",
+
+	EnableHealthCheck:    true,           // Enable health check by default
+	HealthCheckInterval:  time.Minute * 2,  // Check every 2 minutes (reduced from 10)
+
+	// Watchdog defaults
+	WatchdogEnabled:         true,              // Enable watchdog by default
+	WatchdogInterval:        time.Second * 30,  // Check every 30 seconds
+	MinFileGrowthRate:       1000,              // 1KB/s minimum
+	StallThreshold:          3,                 // 3 consecutive stalls = stuck
+	MaxRecoveryAttempts:     5,                 // Max 5 recovery attempts
+	RecoveryCooldown:        time.Minute * 2,   // 2 minutes between recovery attempts
+
+	// Minimum file protection defaults
+	MinimumFilesPerStream:   5,                 // Keep at least 5 files per stream
+	MinimumTotalFiles:       10,                // Keep at least 10 files total
+	ProtectRecentFiles:      time.Hour,         // Don't delete files less than 1 hour old
 
 	AutoStart:         false,         // Don't auto-start by default
 	AutoRecordCheckInterval: time.Second * 10, // Check every 10 seconds by default
@@ -156,6 +189,16 @@ func LoadRecordingConfig() {
 		go cleanupRoutine()
 	}
 
+	// Start health check routine if enabled
+	if GlobalRecordingConfig.EnableHealthCheck {
+		go healthCheckRoutine()
+	}
+
+	// Start watchdog routine if enabled
+	if GlobalRecordingConfig.WatchdogEnabled {
+		go StartWatchdog()
+	}
+
 	// Log configuration in a more readable format
 	log.Info().
 		Str("base_path", GlobalRecordingConfig.BasePath).
@@ -169,6 +212,14 @@ func LoadRecordingConfig() {
 		Bool("auto_start", GlobalRecordingConfig.AutoStart).
 		Dur("auto_record_check_interval", GlobalRecordingConfig.AutoRecordCheckInterval).
 		Bool("enable_cleanup", GlobalRecordingConfig.EnableCleanup).
+		Dur("cleanup_interval", GlobalRecordingConfig.CleanupInterval).
+		Bool("enable_health_check", GlobalRecordingConfig.EnableHealthCheck).
+		Dur("health_check_interval", GlobalRecordingConfig.HealthCheckInterval).
+		Bool("watchdog_enabled", GlobalRecordingConfig.WatchdogEnabled).
+		Dur("watchdog_interval", GlobalRecordingConfig.WatchdogInterval).
+		Int("stall_threshold", GlobalRecordingConfig.StallThreshold).
+		Int("min_files_per_stream", GlobalRecordingConfig.MinimumFilesPerStream).
+		Int("min_total_files", GlobalRecordingConfig.MinimumTotalFiles).
 		Int("stream_count", len(GlobalRecordingConfig.Streams)).
 		Msg("[recording] config loaded")
 		
@@ -210,6 +261,9 @@ func validateRecordingConfig() {
 	// Ensure minimum values
 	if cfg.CleanupInterval < time.Minute {
 		cfg.CleanupInterval = time.Minute
+	}
+	if cfg.HealthCheckInterval < time.Minute {
+		cfg.HealthCheckInterval = time.Minute
 	}
 	if cfg.SegmentDuration < time.Minute && cfg.EnableSegments {
 		cfg.SegmentDuration = time.Minute
