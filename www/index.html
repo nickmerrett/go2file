@@ -89,6 +89,39 @@
 
     const tbody = document.getElementById('streams');
     tbody.addEventListener('click', async ev => {
+        const action = ev.target.dataset.action;
+
+        if (action === 'start-rec') {
+            ev.preventDefault();
+            const name = decodeURIComponent(ev.target.dataset.name);
+            const url = new URL('api/record', location.href);
+            url.searchParams.set('src', name);
+            await fetch(url, {method: 'POST'}).catch(console.error);
+            reload();
+            return;
+        }
+
+        if (action === 'stop-rec') {
+            ev.preventDefault();
+            const name = decodeURIComponent(ev.target.dataset.name);
+            const url = new URL('api/record', location.href);
+            url.searchParams.set('src', name);
+            await fetch(url, {method: 'DELETE'}).catch(console.error);
+            reload();
+            return;
+        }
+
+        if (action === 'analyze') {
+            ev.preventDefault();
+            const name = decodeURIComponent(ev.target.dataset.name);
+            const url = new URL('api/detection/analyze', location.href);
+            url.searchParams.set('stream', name);
+            await fetch(url, {method: 'POST'}).catch(console.error);
+            ev.target.textContent = 'queued';
+            setTimeout(() => { ev.target.textContent = 'analyze'; }, 2000);
+            return;
+        }
+
         if (ev.target.innerText !== 'delete') return;
 
         ev.preventDefault();
@@ -127,7 +160,12 @@
         Promise.all([
             fetch(new URL('api/streams', location.href), {cache: 'no-cache'}).then(r => r.json()).catch(() => ({})),
             fetch(new URL('api/record/configured', location.href), {cache: 'no-cache'}).then(r => r.json()).catch(() => []),
-        ]).then(([streamsData, recordingNames]) => {
+            fetch(new URL('api/record', location.href), {cache: 'no-cache'}).then(r => r.json()).catch(() => ({})),
+        ]).then(([streamsData, recordingNames, activeRecordings]) => {
+            // Build set of stream names with an active recording process
+            const activeRecordingStreams = new Set(
+                Object.values(activeRecordings || {}).map(r => r.stream || r.Stream).filter(Boolean)
+            );
             // Build merged set: all names from both sources
             const allNames = new Set([
                 ...Object.keys(streamsData),
@@ -165,11 +203,16 @@
 
                 const isChecked = checkboxStates[name] ? 'checked' : '';
 
+                const isActiveRec = activeRecordingStreams.has(name);
+
                 let onlineCell;
                 if (isLive) {
                     onlineCell = `<a href="api/streams?src=${src}">${online} / info</a> / <a href="api/streams?src=${src}&video=all&audio=all&microphone">probe</a> / <a href="network.html?src=${src}">net</a>`;
                 } else {
-                    onlineCell = `<span style="color:#999">recording only</span>`;
+                    const recStatus = isActiveRec
+                        ? `<span style="color:#28a745">&#9679; recording</span>`
+                        : `<span style="color:#999">&#9675; idle</span>`;
+                    onlineCell = `${recStatus} / <a href="api/record?src=${src}">info</a>`;
                 }
 
                 let links = [];
@@ -178,6 +221,14 @@
                     links.push(`<a href="links.html?src=${src}">links</a>`);
                 }
                 links.push(`<a href="recordings.html?stream=${src}">recordings</a>`);
+                if (!isLive) {
+                    if (isActiveRec) {
+                        links.push(`<a href="#" data-action="stop-rec" data-name="${name}">stop</a>`);
+                    } else {
+                        links.push(`<a href="#" data-action="start-rec" data-name="${name}">start</a>`);
+                    }
+                    links.push(`<a href="#" data-action="analyze" data-name="${name}">analyze</a>`);
+                }
                 if (isLive) {
                     links.push(`<a href="#" data-name="${src}">delete</a>`);
                 }
