@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/AlexxIT/go2rtc/internal/rtsp"
 	"github.com/AlexxIT/go2rtc/internal/streams"
-	"github.com/AlexxIT/go2rtc/pkg/core"
 )
 
 type RecordConfig struct {
@@ -22,16 +22,16 @@ type RecordConfig struct {
 }
 
 type Recording struct {
-	ID       string        `json:"id"`
-	Config   RecordConfig  `json:"config"`
-	Stream   string        `json:"stream"`
+	ID        string        `json:"id"`
+	Config    RecordConfig  `json:"config"`
+	Stream    string        `json:"stream"`
 	StartTime time.Time     `json:"start_time"`
 	Duration  time.Duration `json:"duration,omitempty"`
-	Active   bool          `json:"active"`
-	PID      int           `json:"pid,omitempty"`      // FFmpeg process PID
-	
-	publisher core.Producer
-	mu        sync.Mutex
+	Active    bool          `json:"active"`
+	PID       int           `json:"pid,omitempty"`
+
+	cmd *exec.Cmd
+	mu  sync.Mutex
 }
 
 func NewRecording(id, streamName string, config RecordConfig) *Recording {
@@ -195,54 +195,44 @@ func (r *Recording) Start() error {
 	
 	
 	
-	// Create the producer using exec with timeout protection
-	type producerResult struct {
-		producer core.Producer
-		err      error
+	// Strip "exec:" prefix — we run FFmpeg directly, not via go2rtc's producer pipeline.
+	// The producer mechanism expects FFmpeg to feed data back into go2rtc, but recording
+	// writes to files only, so we manage the process ourselves.
+	ffmpegArgs := strings.TrimPrefix(execURL, "exec:")
+	args := strings.Fields(ffmpegArgs)
+	if len(args) < 2 {
+		return fmt.Errorf("invalid ffmpeg command: %s", ffmpegArgs)
 	}
-	
-	resultChan := make(chan producerResult, 1)
-	go func() {
-		producer, err := streams.GetProducer(execURL)
-		resultChan <- producerResult{producer: producer, err: err}
-	}()
-	
-	// Wait for producer creation with timeout
-	var producer core.Producer
-	var err error
-	select {
-	case result := <-resultChan:
-		producer = result.producer
-		err = result.err
-	case <-time.After(10 * time.Second):
-		err = fmt.Errorf("timeout creating producer after 10 seconds")
-	}
-	
-	if err != nil {
+
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdout = nil
+	cmd.Stderr = nil // suppress FFmpeg banner noise; enable for debug
+
+	if err := cmd.Start(); err != nil {
 		log.Error().
 			Err(err).
 			Str("recording_id", r.ID).
 			Str("stream", r.Stream).
-			Str("exec_url", execURL).
-			Str("error_type", fmt.Sprintf("%T", err)).
-			Msg("[recording] failed to create exec producer")
-		return fmt.Errorf("failed to create exec producer: %w", err)
+			Msg("[recording] failed to start ffmpeg process")
+		return fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
-	
-	
-	// Start the producer
-	if err := producer.Start(); err != nil {
-		log.Error().
-			Err(err).
-			Str("recording_id", r.ID).
-			Str("stream", r.Stream).
-			Msg("[recording] failed to start recording")
-		return fmt.Errorf("failed to start recording: %w", err)
-	}
-	
-	r.publisher = producer
+
+	r.cmd = cmd
+	r.PID = cmd.Process.Pid
 	r.Active = true
 	r.StartTime = time.Now()
+
+	// Reap the process when it exits so we don't accumulate zombies
+	go func() {
+		_ = cmd.Wait()
+		r.mu.Lock()
+		r.Active = false
+		r.mu.Unlock()
+		log.Debug().
+			Str("recording_id", r.ID).
+			Str("stream", r.Stream).
+			Msg("[recording] ffmpeg process exited")
+	}()
 	
 	log.Info().
 		Str("recording_id", r.ID).
@@ -286,19 +276,14 @@ func (r *Recording) Stop() error {
 	}
 	
 	duration := time.Since(r.StartTime)
-	
-	if r.publisher != nil {
-		err := r.publisher.Stop()
-		r.publisher = nil
-		if err != nil {
-			log.Error().
-				Err(err).
-				Str("recording_id", r.ID).
-				Str("stream", r.Stream).
-				Dur("duration", duration).
-				Msg("[recording] failed to stop recording")
-			return fmt.Errorf("failed to stop recording: %w", err)
+
+	if r.cmd != nil && r.cmd.Process != nil {
+		// Send SIGINT first so FFmpeg can flush/finalise the output file cleanly
+		if err := r.cmd.Process.Signal(os.Interrupt); err != nil {
+			// Fallback to kill if interrupt not supported (e.g. Windows)
+			_ = r.cmd.Process.Kill()
 		}
+		r.cmd = nil
 	}
 	
 	r.Active = false
