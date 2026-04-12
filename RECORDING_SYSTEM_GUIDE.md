@@ -1,327 +1,407 @@
 # go2rtc Recording System Guide
 
-A comprehensive guide to the enhanced recording system with FFmpeg integration, direct RTSP source recording, intelligent cleanup, and per-stream configuration.
+FFmpeg-based recording with segmentation, per-stream retention, cleanup, scheduling, and post-recording object detection.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Direct RTSP Source Recording](#direct-rtsp-source-recording)
+- [Configuration Reference](#configuration-reference)
 - [Per-Stream Configuration](#per-stream-configuration)
+- [Object Detection](#object-detection)
+- [Scheduling](#scheduling)
 - [Cleanup System](#cleanup-system)
 - [API Endpoints](#api-endpoints)
 - [Troubleshooting](#troubleshooting)
 
+---
+
 ## Quick Start
 
-### Basic Recording Configuration
 ```yaml
 recording:
-  auto_start: true
-  base_path: "recordings"
+  base_path: "/recordings"
   default_format: "mp4"
-  default_video: "copy"  # No transcoding - direct codec copy
-  default_audio: "copy"  # No transcoding - direct codec copy
+  default_video: "copy"
+  default_audio: "copy"
+  auto_start: true
   enable_segments: true
-  segment_duration: 10m
+  segment_duration: "10m"
   retention_days: 7
-  
+  enable_cleanup: true
+  cleanup_interval: "1h"
+
   streams:
-    camera1:
+    frontdoor:
       enabled: true
-    camera2:
-      enabled: false
+      source: "rtsp://user:pass@192.168.1.100/stream1"
+    backyard:
+      enabled: true
+      source: "rtsp://user:pass@192.168.1.101/stream1"
 ```
 
-## Configuration
+---
+
+## Configuration Reference
 
 ### Global Settings
-- `auto_start`: Enable automatic recording when streams become available
-- `base_path`: Directory where recordings are stored
-- `default_format`: Output format (mp4, mkv, avi)
-- `default_video`/`default_audio`: Codec settings ("copy" for no transcoding)
-- `enable_segments`: Automatic file segmentation
-- `segment_duration`: Duration before starting new file
-- `retention_days`: How long to keep recordings
-- `enable_cleanup`: Automatic cleanup of old files
 
-### Path and Filename Templates
-```yaml
-recording:
-  path_template: "{year}/{month}/{day}/{stream}"
-  filename_template: "{stream}_{timestamp}"
-```
+| Field | Default | Description |
+|-------|---------|-------------|
+| `base_path` | `recordings` | Root directory for all recordings |
+| `path_template` | `{stream}` | Subdirectory structure under base_path |
+| `filename_template` | `{stream}_{timestamp}` | File naming pattern |
+| `default_format` | `mp4` | Container format |
+| `default_video` | `copy` | Video codec (`copy` = no transcoding) |
+| `default_audio` | `copy` | Audio codec |
+| `auto_start` | `false` | Record all streams automatically |
+| `enable_segments` | `true` | Split recordings into segments |
+| `segment_duration` | `10m` | Segment length |
+| `max_file_size` | `1024` | Max segment size in MB |
+| `retention_days` | `7` | Global retention (overridable per stream) |
+| `retention_hours` | `0` | Alternative to retention_days (more granular) |
+| `max_recordings` | `100` | Max segments per stream |
+| `max_total_size` | `10240` | Total storage cap in MB |
+| `enable_cleanup` | `true` | Auto-delete old files |
+| `cleanup_interval` | `1h` | Cleanup check frequency |
+| `direct_source` | — | Global RTSP template, e.g. `rtsp://nvr/{stream}` |
+| `restart_on_error` | `true` | Restart FFmpeg on failure |
+| `create_directories` | `true` | Auto-create storage directories |
 
-**Available placeholders:**
-- `{stream}`: Stream name
-- `{year}`, `{month}`, `{day}`, `{hour}`: Date/time components
-- `{timestamp}`: Full timestamp (2006-01-02_15-04-05)
-- `{date}`: Date only (2006-01-02)
-- `{time}`: Time only (15-04-05)
+**Path/filename placeholders:** `{stream}`, `{year}`, `{month}`, `{day}`, `{hour}`, `{timestamp}`, `{date}`, `{time}`
 
-## Direct RTSP Source Recording
-
-Record directly from camera RTSP streams, bypassing go2rtc's internal processing for lower CPU usage.
-
-### Global Template (Recommended)
-```yaml
-recording:
-  direct_source: "rtsp://admin:password@camera-{stream}.local/stream1"
-  streams:
-    kitchen: 
-      enabled: true
-    garage:
-      enabled: true
-```
-
-### Per-Stream Sources
-```yaml
-recording:
-  streams:
-    camera1:
-      enabled: true
-      source: "rtsp://admin:password@192.168.1.100/stream1"
-    camera2:
-      enabled: true
-      source: "rtsp://admin:password@192.168.1.101/stream1"
-```
+---
 
 ## Per-Stream Configuration
 
-### Stream-Specific Overrides
+All global settings can be overridden per stream. Only set what differs from the global defaults.
+
 ```yaml
 recording:
-  # Global defaults
-  default_format: "mp4"
-  default_video: "copy"
-  segment_duration: 10m
-  
+  retention_days: 7          # global default
+  segment_duration: "10m"
+
   streams:
-    highres_camera:
+    frontdoor:
       enabled: true
-      format: "mkv"              # Override format
-      segment_duration: 5m       # Shorter segments
-      retention_days: 14         # Keep longer
-      source: "rtsp://..."       # Direct source
-      
-    motion_camera:
+      source: "rtsp://nvr:pass@10.0.0.1:554/Channels/101"
+
+    shed1:
       enabled: true
-      record_on_motion: true     # Future feature
-      retention_hours: 48        # 2 days only
-      
-    audio_only:
+      source: "rtsp://nvr:pass@10.0.0.2:554/Channels/101"
+      retention_days: 30     # keep longer than global default
+      detection: true        # enable post-recording object detection
+
+    backyard:
       enabled: true
-      video: "none"              # Audio only
-      audio: "aac"               # Transcode audio
+      source: "rtsp://nvr:pass@10.0.0.3:554/Channels/101"
+      segment_duration: "5m" # shorter segments
+      retention_hours: 48    # 2 days only
+
+    indoor:
+      enabled: true
+      source: "rtsp://nvr:pass@10.0.0.4:554/Channels/101"
+      detection: true
+      detection_interval: 2  # sample every 2 seconds instead of 1
+      detection_labels:       # only care about these classes
+        - person
 ```
 
-### Quality Settings
+### Stream-Specific Fields
+
+| Field | Description |
+|-------|-------------|
+| `enabled` | Enable/disable recording for this stream |
+| `source` | Direct RTSP URL (bypasses internal routing, lower CPU) |
+| `format` | Override container format |
+| `video` / `audio` | Override codec |
+| `segment_duration` | Override segment length |
+| `retention_days` | Override global retention |
+| `retention_hours` | Override global retention (hours) |
+| `max_recordings` | Override max segments |
+| `auto_start` | Override auto-start for this stream |
+| `width` / `height` / `framerate` | Force resolution/framerate |
+| `bitrate_limit` | Cap output bitrate, e.g. `"2M"` |
+| `schedule` | Cron expression (see [Scheduling](#scheduling)) |
+| `detection` | Enable post-recording detection (bool) |
+| `detection_interval` | Seconds between sampled frames (default: global) |
+| `detection_labels` | Label filter override for this stream |
+
+### Direct Source vs Internal Routing
+
+Recording source priority:
+1. Per-stream `source:` field
+2. Global `direct_source:` template (replaces `{stream}` with stream name)
+3. Internal RTSP fallback (`rtsp://127.0.0.1:{port}/{stream}`)
+
+Direct source bypasses go2rtc's internal pipeline — lower CPU, recommended when no stream processing is needed.
+
+---
+
+## Object Detection
+
+Post-recording object detection analyses completed segments using [CodeProject.AI](https://www.codeproject.com/AI/docs/) or DeepStack. Results are stored as a `.json` sidecar file next to each recording segment.
+
+### Setup
+
+**1. Run CodeProject.AI:**
+```bash
+docker run -p 32168:32168 codeproject/ai-server
+```
+
+**2. Enable detection in config:**
+```yaml
+recording:
+  detection:
+    enabled: true
+    backend_url: "http://localhost:32168"
+    frame_interval: 1        # analyse 1 frame per second
+    min_confidence: 0.45
+    labels:                  # global label filter
+      - person
+      - car
+      - truck
+      - cat
+      - dog
+      - bird
+    retention_days: 30       # prune old sidecar files
+
+  streams:
+    shed1:
+      enabled: true
+      source: "rtsp://..."
+      detection: true        # opt in per stream
+
+    frontdoor:
+      enabled: true
+      source: "rtsp://..."
+      detection: true
+      detection_labels:      # override global labels for this stream
+        - person
+        - car
+
+    backyard:
+      enabled: true
+      source: "rtsp://..."
+      # detection not set — skipped
+```
+
+Detection only runs when **both** `recording.detection.enabled: true` (global) **and** `detection: true` on the stream.
+
+### How It Works
+
+1. A recording segment completes (rotation or manual stop)
+2. The file is queued for analysis
+3. FFmpeg extracts frames at `frame_interval` seconds
+4. Each frame is POSTed to the detection backend
+5. Results written as `{recording_name}.json` alongside the video file
+
+### Sidecar Format
+
+```json
+{
+  "file": "shed1_2026-04-12_14-00-00.mp4",
+  "analysed_at": "2026-04-12T14:11:05Z",
+  "duration_secs": 600,
+  "frame_interval": 1,
+  "frames_checked": 600,
+  "labels": ["person", "cat"],
+  "detections": [
+    {"time_secs": 12, "label": "person", "confidence": 0.91, "x_min": 120, "y_min": 80, "x_max": 340, "y_max": 480},
+    {"time_secs": 47, "label": "cat",    "confidence": 0.72}
+  ]
+}
+```
+
+### UI
+
+The recordings page (`/recordings.html`) shows detected object badges per segment and an **Object** filter dropdown to narrow results by label.
+
+### Backfill Existing Recordings
+
+Re-analyse all un-processed segments for a stream:
+```bash
+curl -X POST "http://localhost:1984/api/detection/analyze?stream=shed1"
+```
+
+Analyse a specific file:
+```bash
+curl -X POST "http://localhost:1984/api/detection/analyze?file=/recordings/shed1/shed1_2026-04-12_14-00-00.mp4&stream=shed1"
+```
+
+---
+
+## Scheduling
+
+Record only during specific time windows using cron syntax.
+
 ```yaml
 recording:
   streams:
-    mobile_stream:
+    office:
       enabled: true
-      width: 1280
-      height: 720
-      framerate: 15
-      bitrate_limit: "2M"
+      schedule: "0 9 * * 1-5"     # weekdays 9am only
+
+    entrance:
+      enabled: true
+      schedule: "0 20 * * *"      # every day at 8pm
 ```
+
+**Cron format:** `minute hour day month weekday`
+
+Supports wildcards (`*`), ranges (`9-17`), lists (`1,3,5`), steps (`*/15`).
+
+**API:**
+```bash
+# List schedules
+curl "http://localhost:1984/api/schedule"
+
+# Test a cron expression (shows next 5 run times)
+curl "http://localhost:1984/api/schedule/test?expr=0+9+*+*+1-5"
+```
+
+---
 
 ## Cleanup System
 
-The cleanup system uses filename-based timestamps for reliable cleanup across restarts.
+Cleanup uses filename-embedded timestamps — reliable across restarts regardless of file modification times.
 
-### Automatic Cleanup
-```yaml
-recording:
-  enable_cleanup: true
-  cleanup_interval: 1h
-  retention_days: 7
-  max_recordings: 100
-  max_total_size: 10240  # MB
-```
+### Protection Rules
 
-### Manual Cleanup Commands
+Files are protected from deletion if:
+- Newer than `protect_recent_files` (default `1h`)
+- Deleting would drop below `minimum_files_per_stream` (default `5`)
+- Deleting would drop below `minimum_total_files` (default `10`)
 
-#### Force Cleanup Old Recordings
+### Manual Cleanup
+
 ```bash
-# Dry run - see what would be deleted
+# Dry run — see what would be deleted
+curl -X POST "http://localhost:1984/api/record/cleanup?dry_run=true"
+
+# Force cleanup
+curl -X POST "http://localhost:1984/api/record/cleanup"
+
+# Aggressive cleanup bypassing protection rules
 curl "http://localhost:1984/api/record/force-cleanup?age_hours=48&dry_run=true"
-
-# Actually delete files older than 48 hours
 curl "http://localhost:1984/api/record/force-cleanup?age_hours=48"
-
-# Delete files older than 7 days
-curl "http://localhost:1984/api/record/force-cleanup?age_days=7"
 ```
 
-### Cleanup Behavior
-- Uses filename timestamps, not file modification times
-- Survives go2rtc restarts
-- Supports multiple timestamp formats
-- Provides detailed cleanup statistics
+---
 
 ## API Endpoints
 
-### Recording Management
-```bash
-# List active recordings
-curl "http://localhost:1984/api/record"
+### Recordings
 
-# Start recording
-curl -X POST "http://localhost:1984/api/record?src=camera1"
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/record` | List active recording processes |
+| POST | `/api/record?src=NAME` | Start recording |
+| DELETE | `/api/record?id=ID` | Stop recording |
+| GET | `/api/record/configured` | List cameras configured for recording |
+| GET | `/api/record/stats` | Storage statistics |
+| GET | `/api/record/health` | Health check |
 
-# Stop recording  
-curl -X DELETE "http://localhost:1984/api/record?id=recording_id"
-```
+### Recording Files
 
-### Segmented Recording
-```bash
-# Start segmented recording
-curl -X POST "http://localhost:1984/api/record/segmented?src=camera1&duration=600"
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/recordings` | List recording files (supports `?stream=`, `?date=`, `?limit=`) |
+| GET | `/api/recordings?download=ID` | Download a recording |
+| GET | `/api/recordings?info=ID` | Detailed ffprobe info |
 
-# List segmented recordings
-curl "http://localhost:1984/api/record/segmented"
-```
+### Cleanup
 
-### Cleanup Operations
-```bash
-# Get cleanup info
-curl "http://localhost:1984/api/record/cleanup-info"
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/record/cleanup` | Run cleanup with stats |
+| GET | `/api/record/cleanup-info` | Cleanup configuration info |
+| GET | `/api/record/force-cleanup` | Aggressive cleanup (bypasses protection) |
 
-# Force cleanup with dry run
-curl "http://localhost:1984/api/record/force-cleanup?age_hours=24&dry_run=true"
+### Watchdog
 
-# Force cleanup (delete files)
-curl "http://localhost:1984/api/record/force-cleanup?age_hours=24"
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/record/watchdog` | Watchdog status per stream |
+| POST | `/api/record/watchdog/reset` | Reset watchdog counters |
 
-## Recording Logic
+### Scheduling
 
-### Stream Recording Behavior
-The system follows these rules for determining which streams to record:
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/schedule` | List schedules |
+| POST | `/api/schedule` | Add schedule |
+| DELETE | `/api/schedule` | Remove schedule |
+| GET | `/api/schedule/test?expr=...` | Test cron expression |
 
-1. **Explicit Configuration Mode** (Recommended):
-   ```yaml
-   recording:
-     streams:
-       camera1: { enabled: true }   # Will record
-       camera2: { enabled: false }  # Won't record
-       camera3: {}                  # Will record (configured = enabled)
-   ```
+### Detection
 
-2. **Global Auto-Start Mode**:
-   ```yaml
-   recording:
-     auto_start: true
-     # No streams section = record ALL available streams
-   ```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/detection/status` | Queue depth and per-stream status |
+| POST | `/api/detection/analyze?stream=NAME` | Queue all un-analysed files for a stream |
+| POST | `/api/detection/analyze?file=PATH` | Queue a specific file |
 
-3. **No Recording**:
-   ```yaml
-   recording:
-     auto_start: false
-     # No streams section = no recording
-   ```
-
-### Direct Source vs Internal Routing
-- **Direct Source**: Records directly from camera RTSP URL (lower CPU)
-- **Internal Routing**: Records from go2rtc's internal RTSP server (allows stream processing)
-
-The system automatically chooses:
-1. Per-stream `source` field (if configured)
-2. Global `direct_source` template (if configured) 
-3. Internal RTSP routing (fallback)
+---
 
 ## Troubleshooting
 
-### Debug Logging
+### Enable Debug Logging
 ```yaml
 log:
   level: debug
 ```
 
-### Common Issues
+### Stream Not Recording
 
-#### Stream Not Recording
-1. Check if stream is in recording configuration:
-   ```bash
-   curl "http://localhost:1984/api/record" | grep "your_stream"
-   ```
+```bash
+# Check which cameras are configured for recording
+curl "http://localhost:1984/api/record/configured"
 
-2. Verify stream is available:
-   ```bash
-   curl "http://localhost:1984/api/streams"
-   ```
+# Check active recording processes
+curl "http://localhost:1984/api/record"
 
-3. Check logs for errors:
-   ```
-   [recording] failed to start recording
-   ```
-
-#### Direct Source Not Working
-1. Verify RTSP URL is accessible
-2. Check debug logs for source resolution:
-   ```
-   [config] using per-stream direct source
-   [recording] using direct RTSP source
-   ```
-
-#### Duplicate Recordings
-This was a bug that has been fixed. If you still see duplicates:
-1. Restart go2rtc
-2. Check for multiple FFmpeg processes: `pgrep -f ffmpeg`
-
-#### Cleanup Not Working
-1. Check cleanup is enabled: `enable_cleanup: true`
-2. Verify retention settings are reasonable
-3. Use manual cleanup to test: `/api/record/force-cleanup`
-
-### Configuration Validation
-The system validates configuration on startup:
-- Creates directories if missing
-- Sets minimum values for intervals
-- Warns about conflicting settings
-
-## Performance Tips
-
-### CPU Optimization
-```yaml
-recording:
-  default_video: "copy"  # No transcoding
-  default_audio: "copy"  # No transcoding
+# Check stream health
+curl "http://localhost:1984/api/record/health"
 ```
 
-### Storage Optimization
-```yaml
-recording:
-  enable_segments: true
-  segment_duration: 10m  # Balance file size vs management overhead
-  max_file_size: 1024    # 1GB max per file
+Common causes:
+- Stream not listed under `recording.streams`
+- `enabled: false` on the stream
+- RTSP source unreachable — check `source:` URL
+
+### Per-Stream Retention Not Working
+
+Ensure `retention_days` is set on the stream (not just globally) and `enable_cleanup: true` is set. Cleanup runs on the `cleanup_interval` — check logs for `[recording] processing stream cleanup`.
+
+### Detection Not Running
+
+1. Verify CodeProject.AI is reachable: `curl http://localhost:32168/v1/vision/detection`
+2. Check `recording.detection.enabled: true` globally
+3. Check `detection: true` on the specific stream
+4. Check status: `curl http://localhost:1984/api/detection/status`
+
+### Duplicate Recordings / Multiple FFmpeg Processes
+
+```bash
+pgrep -c ffmpeg   # count FFmpeg processes
 ```
 
-### Network Optimization
-```yaml
-recording:
-  # Use direct sources to avoid double streaming
-  direct_source: "rtsp://camera-{stream}.local/stream1"
+Restart go2rtc to clear stale processes.
+
+### Storage Full
+
+```bash
+# Check stats
+curl "http://localhost:1984/api/record/stats"
+
+# Emergency cleanup
+curl "http://localhost:1984/api/record/force-cleanup?age_hours=24"
 ```
-
-## Migration from Previous Versions
-
-If upgrading from earlier recording implementations:
-
-1. **Update Configuration**: Use new `recording:` section format
-2. **Check Stream Names**: Ensure recording config matches stream names
-3. **Review Cleanup**: New filename-based cleanup may behave differently
-4. **Test Direct Sources**: Verify RTSP URLs are correct
-
-## Security Considerations
-
-- Store RTSP credentials securely
-- Restrict access to recording directories
-- Use network segmentation for camera access
-- Regular cleanup to manage storage usage
 
 ---
 
-*This recording system provides professional-grade surveillance capabilities with minimal CPU overhead through codec copying and intelligent direct source recording.*
+## Performance Tips
+
+- Use `default_video: copy` and `default_audio: copy` — no transcoding, minimal CPU
+- Use per-stream `source:` or global `direct_source:` to bypass internal routing
+- Set `segment_duration: "10m"` — balances file count vs management overhead
+- Enable detection only on cameras where it adds value; each segment queues an FFmpeg frame-extraction job

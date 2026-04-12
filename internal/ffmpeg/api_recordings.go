@@ -19,21 +19,22 @@ import (
 
 // RecordingFile represents a recording file with metadata
 type RecordingFile struct {
-	ID           string    `json:"id"`
-	StreamName   string    `json:"stream_name"`
-	Filename     string    `json:"filename"`
-	Path         string    `json:"path"`
-	RelativePath string    `json:"relative_path"`
-	Size         int64     `json:"size"`
-	SizeHuman    string    `json:"size_human"`
-	Duration     string    `json:"duration,omitempty"`
-	StartTime    time.Time `json:"start_time"`
-	EndTime      time.Time `json:"end_time,omitempty"`
-	Format       string    `json:"format"`
-	DateGroup    string    `json:"date_group"` // For grouping by date
-	DownloadURL  string    `json:"download_url"`
-	InfoURL      string    `json:"info_url"`
-	StreamURL    string    `json:"stream_url"`
+	ID              string    `json:"id"`
+	StreamName      string    `json:"stream_name"`
+	Filename        string    `json:"filename"`
+	Path            string    `json:"path"`
+	RelativePath    string    `json:"relative_path"`
+	Size            int64     `json:"size"`
+	SizeHuman       string    `json:"size_human"`
+	Duration        string    `json:"duration,omitempty"`
+	StartTime       time.Time `json:"start_time"`
+	EndTime         time.Time `json:"end_time,omitempty"`
+	Format          string    `json:"format"`
+	DateGroup       string    `json:"date_group"` // For grouping by date
+	DownloadURL     string    `json:"download_url"`
+	InfoURL         string    `json:"info_url"`
+	StreamURL       string    `json:"stream_url"`
+	DetectionLabels []string  `json:"detection_labels,omitempty"` // from .json sidecar
 }
 
 // apiRecordings handles recording file listing and download requests
@@ -424,6 +425,7 @@ func parseRecordingFile(filePath string, info os.FileInfo) (*RecordingFile, erro
 		DownloadURL:  fmt.Sprintf("/api/recordings?download=%s", id),
 		InfoURL:      fmt.Sprintf("/api/recordings?info=%s", id),
 		StreamURL:    fmt.Sprintf("stream.html?src=recording_%s", id),
+		DetectionLabels: loadDetectionLabels(filePath),
 	}
 	
 	return recording, nil
@@ -590,6 +592,24 @@ func formatFileSize(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// loadDetectionLabels reads the .json sidecar for a recording and returns
+// the unique labels found, or nil if no sidecar exists yet.
+func loadDetectionLabels(filePath string) []string {
+	ext := filepath.Ext(filePath)
+	sidecar := strings.TrimSuffix(filePath, ext) + ".json"
+	data, err := os.ReadFile(sidecar)
+	if err != nil {
+		return nil
+	}
+	var result struct {
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil
+	}
+	return result.Labels
 }
 
 // groupRecordingsByDate groups recordings by date for easier navigation

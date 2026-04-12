@@ -58,6 +58,7 @@ func Init() {
 	api.HandleFunc("api/record/cleanup", apiRecordingCleanup)
 	api.HandleFunc("api/record/health", apiRecordingHealth)
 	api.HandleFunc("api/record/watchdog", apiWatchdog)
+	api.HandleFunc("api/record/configured", apiRecordConfigured)
 	api.HandleFunc("api/record/watchdog/reset", apiWatchdogReset)
 	api.HandleFunc("api/recordings", apiRecordings)
 	api.HandleFunc("api/schedule", apiScheduler)
@@ -65,6 +66,9 @@ func Init() {
 
 	// Load recording configuration
 	LoadRecordingConfig()
+
+	// Wire detection base-path accessor (avoids circular import)
+	InitDetection()
 
 	// Start auto-recordings if enabled
 	if GlobalRecordingConfig.AutoStart || len(GlobalRecordingConfig.Streams) > 0 {

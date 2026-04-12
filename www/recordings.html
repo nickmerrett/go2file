@@ -28,10 +28,24 @@
         .controls {
             display: flex;
             padding: 5px;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
         }
 
         .controls > label {
             margin-left: 10px;
+        }
+
+        .det-badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin: 1px 2px;
+            background: #e2f0fb;
+            color: #0a558c;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -40,13 +54,18 @@
 <div class="info"></div>
 <div class="controls">
     <a href="/">home</a>
-    <label>Camera: 
+    <label>Camera:
         <select id="streamFilter">
             <option value="">All Cameras</option>
         </select>
     </label>
     <label>Date: <input type="date" id="dateFilter" /></label>
-    <label>Limit: 
+    <label>Object:
+        <select id="labelFilter">
+            <option value="">Any</option>
+        </select>
+    </label>
+    <label>Limit:
         <select id="limitFilter">
             <option value="50">50</option>
             <option value="100" selected>100</option>
@@ -72,6 +91,7 @@
     let allRecordings = [];
     let currentStreamFilter = '';
     let currentDateFilter = '';
+    let currentLabelFilter = '';
     let currentLimit = 100;
 
     // Initialize from URL parameters
@@ -102,12 +122,17 @@
             currentStreamFilter = this.value;
             loadRecordings();
         });
-        
+
         document.getElementById('dateFilter').addEventListener('change', function() {
             currentDateFilter = this.value;
             loadRecordings();
         });
-        
+
+        document.getElementById('labelFilter').addEventListener('change', function() {
+            currentLabelFilter = this.value;
+            renderRecordings(allRecordings, groupRecordings(allRecordings));
+        });
+
         document.getElementById('limitFilter').addEventListener('change', function() {
             currentLimit = parseInt(this.value);
             loadRecordings();
@@ -131,9 +156,10 @@
 
             const data = await response.json();
             allRecordings = data.recordings || [];
-            
-            updateStreamFilter(data.recordings);
-            renderRecordings(data.recordings, data.grouped || {});
+
+            updateStreamFilter(allRecordings);
+            updateLabelFilter(allRecordings);
+            renderRecordings(allRecordings, groupRecordings(allRecordings));
             
             // Update info like index.html does
             info.innerText = `Recordings: ${data.recordings.length} found`;
@@ -165,44 +191,79 @@
         });
     }
 
+    function groupRecordings(recordings) {
+        const filtered = currentLabelFilter
+            ? recordings.filter(r => r.detection_labels && r.detection_labels.includes(currentLabelFilter))
+            : recordings;
+        const grouped = {};
+        filtered.forEach(r => {
+            const date = r.date_group || new Date(r.start_time).toISOString().split('T')[0];
+            if (!grouped[date]) grouped[date] = [];
+            grouped[date].push(r);
+        });
+        return grouped;
+    }
+
+    function updateLabelFilter(recordings) {
+        const labelFilter = document.getElementById('labelFilter');
+        const current = currentLabelFilter || labelFilter.value;
+
+        const labelSet = new Set();
+        recordings.forEach(r => {
+            if (r.detection_labels) r.detection_labels.forEach(l => labelSet.add(l));
+        });
+
+        labelFilter.innerHTML = '<option value="">Any</option>';
+        [...labelSet].sort().forEach(label => {
+            const opt = document.createElement('option');
+            opt.value = label;
+            opt.textContent = label;
+            if (label === current) opt.selected = true;
+            labelFilter.appendChild(opt);
+        });
+    }
+
     function renderRecordings(recordings, grouped) {
         const tbody = document.getElementById('recordings');
         tbody.innerHTML = '';
-        
-        if (recordings.length === 0) {
+
+        const totalShown = Object.values(grouped).reduce((n, arr) => n + arr.length, 0);
+        if (totalShown === 0) {
             const row = document.createElement('tr');
             row.innerHTML = '<td colspan="4">No recordings found</td>';
             tbody.appendChild(row);
             return;
         }
 
-        // Sort dates in descending order (newest first)
+        // Sort dates descending (newest first)
         const sortedDates = Object.keys(grouped).sort().reverse();
-        
+
         sortedDates.forEach(date => {
-            // Add date header row (like index.html style)
             const dateRow = document.createElement('tr');
             dateRow.innerHTML = `<td colspan="4"><strong>${formatDateHeader(date)}</strong></td>`;
             tbody.appendChild(dateRow);
-            
-            // Add recording rows for this date
+
             grouped[date].forEach(recording => {
                 const row = document.createElement('tr');
-                
+
                 const startTime = new Date(recording.start_time);
                 const commands = [
                     `<a href="stream.html?src=recording_${recording.id}">stream</a>`,
                     `<a href="${recording.download_url}" download>download</a>`,
                     `<a href="/api/recordings?info=${recording.id}">info</a>`
                 ].join(' / ');
-                
+
+                const badges = (recording.detection_labels || [])
+                    .map(l => `<span class="det-badge">${l}</span>`)
+                    .join('');
+
                 row.innerHTML = `
                     <td>${recording.stream_name}</td>
                     <td>${formatDateTime(startTime)}</td>
                     <td>${recording.size_human}</td>
-                    <td>${commands}</td>
+                    <td>${commands}${badges ? ' &nbsp;' + badges : ''}</td>
                 `;
-                
+
                 tbody.appendChild(row);
             });
         });

@@ -40,6 +40,11 @@ type StreamRecordingConfig struct {
 	// Schedule-based recording
 	Schedule         string        `yaml:"schedule"`          // Cron-like schedule (future feature)
 	RecordOnMotion   bool          `yaml:"record_on_motion"`  // Record only on motion detection
+
+	// Post-recording object detection
+	Detection        bool          `yaml:"detection"`           // Enable post-recording detection for this stream
+	DetectionInterval int          `yaml:"detection_interval"`  // Seconds between sampled frames (overrides global)
+	DetectionLabels  []string      `yaml:"detection_labels"`    // Label filter override for this stream
 	
 	// Quality settings
 	Width            int           `yaml:"width"`             // Force specific width

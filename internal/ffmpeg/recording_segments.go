@@ -77,8 +77,13 @@ func (sr *SegmentedRecording) Stop() error {
 
 	// Stop current segment
 	if sr.currentRecording != nil {
+		completedFile := sr.currentRecording.Config.Filename
 		sr.currentRecording.Stop()
 		sr.currentRecording = nil
+		// Queue final segment for detection
+		if completedFile != "" {
+			go onSegmentComplete(sr.Stream, completedFile)
+		}
 	}
 
 	sr.Active = false
@@ -102,7 +107,12 @@ func (sr *SegmentedRecording) startNextSegment() error {
 			Str("recording_id", sr.ID).
 			Int("prev_segment", sr.currentSegment-1).
 			Msg("[segments] stopping previous segment")
+		completedFile := sr.currentRecording.Config.Filename
 		sr.currentRecording.Stop()
+		// Queue completed segment for post-recording detection analysis
+		if completedFile != "" {
+			go onSegmentComplete(sr.Stream, completedFile)
+		}
 	}
 
 	// Generate filename for new segment

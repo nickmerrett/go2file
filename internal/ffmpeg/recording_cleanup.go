@@ -463,11 +463,21 @@ func cleanupStreamWithStats(streamName string, recordings []CleanupRecordingInfo
 		Msg("[recording] processing stream cleanup")
 
 	var toDelete []CleanupRecordingInfo
-	retentionDuration := GetRetentionDuration()
+	// Use per-stream retention if configured, fall back to global
+	var retentionDuration time.Duration
+	if streamConfig.RetentionHours > 0 {
+		retentionDuration = time.Duration(streamConfig.RetentionHours) * time.Hour
+	} else if streamConfig.RetentionDays > 0 {
+		retentionDuration = time.Duration(streamConfig.RetentionDays) * 24 * time.Hour
+	} else {
+		retentionDuration = GetRetentionDuration()
+	}
 	cutoffTime := time.Now().Add(-retentionDuration)
-	
+
 	log.Debug().
 		Str("stream", streamName).
+		Int("stream_retention_days", streamConfig.RetentionDays).
+		Int("stream_retention_hours", streamConfig.RetentionHours).
 		Dur("retention_duration", retentionDuration).
 		Time("cutoff_time", cutoffTime).
 		Msg("[recording] applying retention policy")

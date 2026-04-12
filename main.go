@@ -13,6 +13,7 @@ import (
 	"github.com/AlexxIT/go2rtc/internal/eseecloud"
 	"github.com/AlexxIT/go2rtc/internal/exec"
 	"github.com/AlexxIT/go2rtc/internal/expr"
+	"github.com/AlexxIT/go2rtc/internal/detection"
 	"github.com/AlexxIT/go2rtc/internal/ffmpeg"
 	"github.com/AlexxIT/go2rtc/internal/flussonic"
 	"github.com/AlexxIT/go2rtc/internal/gopro"
@@ -77,7 +78,8 @@ func main() {
 
 	rtmp.Init()     // rtmp source
 	exec.Init()     // exec source
-	ffmpeg.Init()   // ffmpeg source
+	ffmpeg.Init()     // ffmpeg source
+	detection.Init() // post-recording object detection
 	echo.Init()     // echo source
 	ivideon.Init()  // ivideon source
 	http.Init()     // http/tcp source
