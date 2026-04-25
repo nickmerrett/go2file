@@ -135,33 +135,6 @@ func performHealthCheckAndRecover() {
 
 // runCleanup performs the cleanup operation
 func runCleanup() error {
-	// Perform health check before cleanup
-	healthCheck := performHealthCheck()
-
-	// Log health check results
-	log.Info().
-		Bool("healthy", healthCheck.Healthy).
-		Int("active_ffmpeg_processes", healthCheck.ActiveFFmpegProcesses).
-		Int("expected_recordings", healthCheck.ExpectedRecordings).
-		Dur("newest_recording_age", healthCheck.NewestRecordingAge).
-		Strs("warnings", healthCheck.Warnings).
-		Msg("[recording] health check before cleanup")
-
-	// If recording system is not healthy, take recovery actions
-	if !healthCheck.Healthy {
-		log.Warn().
-			Strs("streams_with_issues", healthCheck.StreamsWithIssues).
-			Strs("warnings", healthCheck.Warnings).
-			Msg("[recording] UNHEALTHY recording system detected - attempting recovery")
-
-		// Attempt to recover failed streams
-		attemptRecovery(healthCheck)
-
-		// Skip cleanup to prevent data loss while system is recovering
-		log.Warn().Msg("[recording] SKIPPING cleanup due to unhealthy recording system")
-		return fmt.Errorf("skipping cleanup: recording system unhealthy")
-	}
-
 	// Pre-check: Verify we're not at minimum file thresholds before cleanup
 	cfg := GlobalRecordingConfig
 	recordings, err := findRecordingFiles(cfg.BasePath)

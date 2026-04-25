@@ -146,6 +146,23 @@ func (sr *SegmentedRecording) startNextSegment() error {
 	sr.segmentStartTime = now
 	sr.currentSegment++
 
+	// Watch for unexpected ffmpeg exit and propagate failure to sr.Active so
+	// the UI and auto-recording monitor see an honest "not recording" state.
+	go func(rec *Recording) {
+		for rec.Active {
+			time.Sleep(time.Second)
+		}
+		sr.mu.Lock()
+		if sr.currentRecording == rec && sr.Active {
+			log.Warn().
+				Str("recording_id", sr.ID).
+				Str("stream", sr.Stream).
+				Msg("[segments] underlying ffmpeg exited unexpectedly, marking inactive")
+			sr.Active = false
+		}
+		sr.mu.Unlock()
+	}(recording)
+
 	log.Info().
 		Str("recording", sr.ID).
 		Str("segment", segmentPath).
