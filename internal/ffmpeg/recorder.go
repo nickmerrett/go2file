@@ -1,6 +1,7 @@
 package ffmpeg
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -204,9 +205,16 @@ func (r *Recording) Start() error {
 		return fmt.Errorf("invalid ffmpeg command: %s", ffmpegArgs)
 	}
 
+	log.Info().
+		Str("recording_id", r.ID).
+		Str("stream", r.Stream).
+		Str("command", strings.Join(args, " ")).
+		Msg("[recording] launching ffmpeg")
+
+	var stderrBuf bytes.Buffer
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = nil
-	cmd.Stderr = nil // suppress FFmpeg banner noise; enable for debug
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		log.Error().
@@ -228,10 +236,18 @@ func (r *Recording) Start() error {
 		r.mu.Lock()
 		r.Active = false
 		r.mu.Unlock()
-		log.Debug().
-			Str("recording_id", r.ID).
-			Str("stream", r.Stream).
-			Msg("[recording] ffmpeg process exited")
+		if stderrBuf.Len() > 0 {
+			log.Error().
+				Str("recording_id", r.ID).
+				Str("stream", r.Stream).
+				Str("ffmpeg_stderr", stderrBuf.String()).
+				Msg("[recording] ffmpeg exited with output")
+		} else {
+			log.Debug().
+				Str("recording_id", r.ID).
+				Str("stream", r.Stream).
+				Msg("[recording] ffmpeg process exited")
+		}
 	}()
 	
 	log.Info().
