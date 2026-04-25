@@ -74,6 +74,11 @@ func getStreamRecordingCounts(recordings []CleanupRecordingInfo) (map[string]int
 
 // cleanupRoutine runs the cleanup process at regular intervals
 func cleanupRoutine() {
+	// Run immediately on startup before waiting for the first interval
+	if err := runCleanup(); err != nil {
+		log.Error().Err(err).Msg("[recording] startup cleanup failed")
+	}
+
 	ticker := time.NewTicker(GlobalRecordingConfig.CleanupInterval)
 	defer ticker.Stop()
 
