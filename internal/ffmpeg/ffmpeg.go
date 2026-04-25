@@ -59,6 +59,7 @@ func Init() {
 	api.HandleFunc("api/record/health", apiRecordingHealth)
 	api.HandleFunc("api/record/watchdog", apiWatchdog)
 	api.HandleFunc("api/record/configured", apiRecordConfigured)
+	api.HandleFunc("api/record/errors", apiRecordErrors)
 	api.HandleFunc("api/record/watchdog/reset", apiWatchdogReset)
 	api.HandleFunc("api/recordings", apiRecordings)
 	api.HandleFunc("api/schedule", apiScheduler)

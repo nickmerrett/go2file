@@ -197,6 +197,14 @@ func handleStopRecording(w http.ResponseWriter, r *http.Request, query url.Value
 	json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 }
 
+func apiRecordErrors(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	api.ResponseJSON(w, GetStreamErrors())
+}
+
 func apiRecordConfigured(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

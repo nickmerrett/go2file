@@ -14,6 +14,73 @@ import (
 	"github.com/AlexxIT/go2rtc/internal/streams"
 )
 
+// StreamError holds the last known error for a stream's recording process.
+type StreamError struct {
+	Error     string    `json:"error"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+var streamErrors = struct {
+	sync.RWMutex
+	m map[string]StreamError
+}{m: make(map[string]StreamError)}
+
+func setStreamError(streamName, errMsg string) {
+	streamErrors.Lock()
+	streamErrors.m[streamName] = StreamError{Error: errMsg, Timestamp: time.Now()}
+	streamErrors.Unlock()
+}
+
+func clearStreamError(streamName string) {
+	streamErrors.Lock()
+	delete(streamErrors.m, streamName)
+	streamErrors.Unlock()
+}
+
+// GetStreamErrors returns a snapshot of all current stream recording errors.
+func GetStreamErrors() map[string]StreamError {
+	streamErrors.RLock()
+	defer streamErrors.RUnlock()
+	result := make(map[string]StreamError, len(streamErrors.m))
+	for k, v := range streamErrors.m {
+		result[k] = v
+	}
+	return result
+}
+
+// extractFFmpegError pulls a short human-readable message from ffmpeg stderr.
+func extractFFmpegError(stderr string) string {
+	knownErrors := []string{
+		"Quota exceeded",
+		"Host is unreachable",
+		"Connection refused",
+		"No route to host",
+		"Connection timed out",
+		"Permission denied",
+		"No such file or directory",
+		"Invalid data found",
+	}
+	for _, p := range knownErrors {
+		if strings.Contains(stderr, p) {
+			return p
+		}
+	}
+	// Fall back to last non-trivial line
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || line == "Conversion failed!" {
+			continue
+		}
+		// Strip ffmpeg log prefix "[tag @ 0x...]"
+		if idx := strings.LastIndex(line, "] "); idx >= 0 {
+			return strings.TrimSpace(line[idx+2:])
+		}
+		return line
+	}
+	return "ffmpeg exited unexpectedly"
+}
+
 type RecordConfig struct {
 	Filename string        `json:"filename"`
 	Format   string        `json:"format,omitempty"`
@@ -229,6 +296,7 @@ func (r *Recording) Start() error {
 	r.PID = cmd.Process.Pid
 	r.Active = true
 	r.StartTime = time.Now()
+	clearStreamError(r.Stream)
 
 	// Reap the process when it exits so we don't accumulate zombies
 	go func() {
@@ -237,9 +305,12 @@ func (r *Recording) Start() error {
 		r.Active = false
 		r.mu.Unlock()
 		if stderrBuf.Len() > 0 {
+			errMsg := extractFFmpegError(stderrBuf.String())
+			setStreamError(r.Stream, errMsg)
 			log.Error().
 				Str("recording_id", r.ID).
 				Str("stream", r.Stream).
+				Str("error", errMsg).
 				Str("ffmpeg_stderr", stderrBuf.String()).
 				Msg("[recording] ffmpeg exited with output")
 		} else {
